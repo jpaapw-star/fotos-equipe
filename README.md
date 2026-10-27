@@ -11,4 +11,6 @@ App da Web (Google Apps Script) que coloca o link da foto de cada pessoa na colu
   e o link vai para a coluna FOTOS. Foto nova da mesma pessoa troca a antiga (a antiga vai para a lixeira).
 - Procura a pessoa pelo nome em cada aba, porque as abas não têm as mesmas pessoas nas mesmas linhas.
 
+- Também aceita uma **pasta inteira**: do computador (botão "Pasta do PC" ou arrastando a pasta) ou do Google Drive (cole o link; as fotos ficam onde estão, o app só libera o link de leitura e grava na planilha).
+
 Instalação: [docs/INSTALACAO.md](docs/INSTALACAO.md).

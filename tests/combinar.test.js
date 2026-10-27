@@ -101,3 +101,12 @@ test('duas fotos para a mesma pessoa: a segunda fica para escolher', () => {
   assert.strictEqual(r[1].nivel, 'duvida');
   assert.deepStrictEqual([...r[1].opcoes], ['BRUNO VITOR']);
 });
+
+test('link da pasta do Drive vira o ID da pasta', () => {
+  const id = '1AbCdEfGhIjKlMnOpQrStUvWxYz012345';
+  assert.strictEqual(ctx.idDaPasta_('https://drive.google.com/drive/folders/' + id + '?usp=sharing'), id);
+  assert.strictEqual(ctx.idDaPasta_('https://drive.google.com/drive/u/0/folders/' + id), id);
+  assert.strictEqual(ctx.idDaPasta_('https://drive.google.com/open?id=' + id), id);
+  assert.strictEqual(ctx.idDaPasta_(id), id);
+  assert.throws(() => ctx.idDaPasta_('fotos da equipe'));
+});

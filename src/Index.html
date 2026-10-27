@@ -61,21 +61,38 @@
     font: inherit; font-weight: 600; border: 0; border-radius: 980px; padding: 12px 22px; cursor: pointer;
     background: var(--botao); color: var(--botao-texto);
   }
-  button.leve { background: var(--cartao); color: var(--texto); }
+  button.leve, .botao-leve { background: var(--cartao); color: var(--texto); }
+  .botao-leve { font-weight: 600; border-radius: 980px; cursor: pointer; }
   button:disabled { opacity: .35; cursor: default; }
   [hidden] { display: none !important; }
+  .opcoes { display: flex; gap: 10px; margin-top: 10px; }
+  .opcoes > * { flex: 1; text-align: center; padding: 11px 12px; font-size: 15px; }
+  .com-fotos .opcoes { display: none; }
+  .drive { display: flex; gap: 10px; margin-top: 10px; }
+  .drive input {
+    flex: 1; min-width: 0; font: inherit; color: var(--texto); background: var(--cartao);
+    border: 1px solid var(--linha); border-radius: 980px; padding: 10px 16px;
+  }
 </style>
 </head>
 <body>
 <main>
   <h1>Fotos da equipe</h1>
-  <p class="sub" id="sub">Escolha as fotos. O app acha a pessoa pelo nome ou número do arquivo e coloca o link na coluna FOTOS.</p>
+  <p class="sub" id="sub">Escolha a pasta ou as fotos. O app acha a pessoa pelo nome ou número do arquivo e coloca o link na coluna FOTOS.</p>
 
   <label class="area" id="area">
     <strong id="rotulo">Escolher fotos</strong>
     <span>Várias de uma vez ou um arquivo .zip. Também dá para arrastar aqui.</span>
     <input type="file" id="entrada" multiple accept="image/*,.zip,application/zip">
   </label>
+  <div class="opcoes">
+    <label class="botao-leve">Pasta do PC<input type="file" id="entradaPasta" webkitdirectory multiple></label>
+    <button class="leve" type="button" id="botaoDrive">Pasta do Drive</button>
+  </div>
+  <div class="drive" id="drive" hidden>
+    <input id="linkDrive" placeholder="Cole o link da pasta do Drive" autocomplete="off">
+    <button id="abrirDrive" type="button">Abrir</button>
+  </div>
 
   <div id="painel" hidden>
     <div class="resumo" id="resumo"></div>
@@ -93,7 +110,7 @@
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 <script>
-  var itens = [];        // { arquivo, blob, url, r, escolha, estado }
+  var itens = [];        // { arquivo, blob | driveId, url, r, escolha, estado }
   var pessoas = [];
   var porChave = {};
   var enviando = false;
@@ -126,13 +143,52 @@
           if (z.dir || curto.charAt(0) === '.' || nomes[j].indexOf('__MACOSX') >= 0 || !ehImagem(curto)) continue;
           novos.push({ arquivo: curto, blob: await z.async('blob') });
         }
-      } else if (ehImagem(f.name, f.type)) {
+      } else if (ehImagem(f.name, f.type) && f.name.charAt(0) !== '.') {
         novos.push({ arquivo: f.name, blob: f });
       }
     }
-    if (!novos.length) { $('status').textContent = 'Nenhuma foto nesses arquivos.'; return; }
+    await juntar(novos);
+  }
+
+  async function juntar(novos) {
+    if (!novos.length) { $('status').textContent = 'Nenhuma foto encontrada.'; return; }
     itens = itens.concat(novos);
     await preparar();
+  }
+
+  // Pasta do Drive: as fotos ficam onde estão; o app só cria o link de cada uma.
+  async function abrirDrive() {
+    var link = $('linkDrive').value.trim();
+    if (!link || enviando) return;
+    $('barra').hidden = false;
+    $('status').textContent = 'Procurando fotos na pasta do Drive…';
+    try {
+      var resp = await chamar('apiListarPasta', link);
+      $('drive').hidden = true;
+      await juntar(resp.arquivos.map(function (a) {
+        return { arquivo: a.nome, driveId: a.id, url: 'https://drive.google.com/thumbnail?id=' + a.id + '&sz=w120' };
+      }));
+    } catch (e) {
+      $('status').textContent = 'Erro: ' + (e && e.message || e);
+    }
+  }
+
+  // Arrastar uma pasta: lê tudo o que tem dentro, inclusive subpastas.
+  function lerEntrada(entrada) {
+    return new Promise(function (ok) {
+      if (entrada.isFile) return entrada.file(function (f) { ok([f]); }, function () { ok([]); });
+      var leitor = entrada.createReader(), todos = [];
+      (function ler() {
+        leitor.readEntries(async function (lote) {
+          if (!lote.length) {
+            var listas = await Promise.all(todos.map(lerEntrada));
+            return ok([].concat.apply([], listas));
+          }
+          todos = todos.concat(lote);
+          ler();
+        }, function () { ok([]); });
+      })();
+    });
   }
 
   async function preparar() {
@@ -260,10 +316,15 @@
       var it = fila[i];
       $('status').textContent = 'Colocando ' + (i + 1) + ' de ' + fila.length + '…';
       try {
-        var foto = await prepararFoto(it.blob);
-        var resp = await chamar('apiEnviar', {
-          chave: it.escolha, arquivo: it.arquivo, mime: foto.type || 'image/jpeg', base64: await base64(foto)
-        });
+        var resp;
+        if (it.driveId) {
+          resp = await chamar('apiUsarDoDrive', { chave: it.escolha, driveId: it.driveId });
+        } else {
+          var foto = await prepararFoto(it.blob);
+          resp = await chamar('apiEnviar', {
+            chave: it.escolha, arquivo: it.arquivo, mime: foto.type || 'image/jpeg', base64: await base64(foto)
+          });
+        }
         it.estado = 'feito';
         it.msg = (resp.substituiu ? 'Trocou a foto em ' : 'Colocada em ') + resp.lugares.join(' e ') + '.';
         porChave[it.escolha].temFoto = true;
@@ -281,12 +342,17 @@
   }
 
   $('entrada').onchange = function (e) { abrirArquivos(e.target.files); e.target.value = ''; };
+  $('entradaPasta').onchange = function (e) { abrirArquivos(e.target.files); e.target.value = ''; };
+  $('botaoDrive').onclick = function () { $('drive').hidden = !$('drive').hidden; $('linkDrive').focus(); };
+  $('abrirDrive').onclick = abrirDrive;
+  $('linkDrive').onkeydown = function (e) { if (e.key === 'Enter') abrirDrive(); };
   $('enviar').onclick = enviarTodas;
   $('limpar').onclick = function () {
     if (enviando) return;
     itens = [];
     $('painel').hidden = true;
     $('barra').hidden = true;
+    $('drive').hidden = true;
     document.body.classList.remove('com-fotos');
     $('rotulo').textContent = 'Escolher fotos';
   };
@@ -297,7 +363,14 @@
   ['dragleave', 'drop'].forEach(function (t) {
     area.addEventListener(t, function (e) { e.preventDefault(); area.classList.remove('sobre'); });
   });
-  area.addEventListener('drop', function (e) { abrirArquivos(e.dataTransfer.files); });
+  area.addEventListener('drop', async function (e) {
+    var entradas = Array.prototype.map.call(e.dataTransfer.items || [], function (i) {
+      return i.webkitGetAsEntry ? i.webkitGetAsEntry() : null;
+    }).filter(Boolean);
+    if (!entradas.length) return abrirArquivos(e.dataTransfer.files);
+    var listas = await Promise.all(entradas.map(lerEntrada));
+    abrirArquivos([].concat.apply([], listas));
+  });
 </script>
 </body>
 </html>
