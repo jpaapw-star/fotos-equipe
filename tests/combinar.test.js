@@ -110,3 +110,24 @@ test('link da pasta do Drive vira o ID da pasta', () => {
   assert.strictEqual(ctx.idDaPasta_(id), id);
   assert.throws(() => ctx.idDaPasta_('fotos da equipe'));
 });
+
+test('foto já colocada não volta; pessoa com foto só troca com arquivo novo', () => {
+  const arquivos = [
+    { nome: 'BRUNO VITOR.jpg', origem: 'drive:A' },       // mesmo arquivo de antes
+    { nome: 'KAREN.jpg', origem: 'drive:B' },             // Karen tem foto registrada, arquivo novo
+    { nome: 'joao pedro.jpg', origem: 'drive:C' },        // João tem foto na planilha, mas sem registro
+    { nome: 'KEVILIN.jpg', origem: 'drive:D' },           // ainda sem foto
+  ];
+  const ps = JSON.parse(JSON.stringify(pessoas));
+  ps.find((p) => p.chave === 'KAREN').temFoto = true;
+  ps.find((p) => p.chave === 'BRUNO VITOR').temFoto = true;
+  const reg = { 'BRUNO VITOR': { origem: 'drive:A' }, KAREN: { origem: 'drive:velho' } };
+  const r = ctx.combinar_(arquivos.map((a) => a.nome), ps);
+  ctx.marcarJaColocadas_(r, arquivos, ps, reg);
+  assert.strictEqual(r[0].ja, true);
+  assert.strictEqual(r[1].ja, undefined);
+  assert.match(r[1].motivo, /trocar a atual/);
+  assert.strictEqual(r[2].ja, true);
+  assert.strictEqual(r[3].ja, undefined);
+  assert.strictEqual(r[3].chave, 'KEVILIN');
+});
