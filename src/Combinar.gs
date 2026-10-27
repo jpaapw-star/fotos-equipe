@@ -99,7 +99,9 @@ function combinarUm_(arquivo, pessoas) {
       r.motivo = 'O número ' + numeros[0] + ' é de pessoas diferentes nas abas. Escolha quem é.';
       return r;
     }
-    r.motivo = 'O número ' + numeros[0] + ' não tem pessoa na planilha.';
+    r.motivo = numeros[0].length > 4
+      ? 'O nome do arquivo é só um número longo, sem nome de pessoa. Escolha quem é.'
+      : 'O número ' + numeros[0] + ' não tem pessoa na planilha.';
   }
   return r;
 }

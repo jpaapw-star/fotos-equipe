@@ -33,7 +33,14 @@
   .area span { color: var(--suave); font-size: 14px; }
   input[type=file] { display: none; }
   .resumo { display: flex; gap: 8px 24px; flex-wrap: wrap; margin: 28px 0 12px; color: var(--suave); font-size: 15px; }
-  .resumo b { color: var(--texto); font-size: 22px; font-weight: 600; margin-right: 6px; }
+  .resumo { gap: 8px; margin: 24px 0 14px; }
+  .resumo button {
+    background: var(--cartao); color: var(--suave); font-weight: 400; font-size: 15px; padding: 7px 14px;
+    border: 1px solid var(--linha);
+  }
+  .resumo button b { color: var(--texto); font-weight: 600; margin-right: 5px; }
+  .resumo button.ativo { background: var(--botao); color: var(--botao-texto); border-color: var(--botao); }
+  .resumo button.ativo b { color: var(--botao-texto); }
   ul { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--linha); }
   li { display: flex; align-items: center; gap: 14px; padding: 12px 0; border-bottom: 1px solid var(--linha); }
   li img, li .sem { width: 52px; height: 52px; border-radius: 12px; object-fit: cover; background: var(--cartao); flex: none; }
@@ -114,6 +121,7 @@
   var pessoas = [];
   var porChave = {};
   var enviando = false;
+  var filtro = '';       // '' = todas; senão certo, conferir, duvida, nada ou feito
 
   var $ = function (id) { return document.getElementById(id); };
 
@@ -238,11 +246,12 @@
     var lista = $('lista');
     lista.innerHTML = '';
     itens.forEach(function (it, i) {
+      if (filtro && categoria(it) !== filtro) return;
       if (!it.url) it.url = URL.createObjectURL(it.blob);
       var li = document.createElement('li');
       var classe = it.estado === 'feito' ? 'ok' : it.estado === 'erro' ? 'erro' : '';
       var texto = it.msg || it.r.motivo;
-      li.innerHTML = '<img src="' + it.url + '" alt="" onerror="this.outerHTML=\'<div class=sem></div>\'">' +
+      li.innerHTML = '<img loading="lazy" src="' + it.url + '" alt="" onerror="this.outerHTML=\'<div class=sem></div>\'">' +
         '<div class="meio"><div class="arq">' + esc(it.arquivo) + '</div>' +
         '<select data-i="' + i + '"' + (it.estado === 'feito' || enviando ? ' disabled' : '') + '>' + opcoesHtml(it) + '</select>' +
         '<div class="motivo ' + classe + '">' + esc(texto) + '</div></div>';
@@ -260,16 +269,34 @@
     atualizarResumo();
   }
 
+  function categoria(it) {
+    return it.estado === 'feito' ? 'feito' : it.r.nivel;
+  }
+
+  // Tocar numa categoria mostra só ela; tocar de novo (ou em Todas) volta a mostrar tudo.
+  function filtrar(f) {
+    filtro = filtro === f ? '' : f;
+    desenhar();
+    window.scrollTo({ top: $('resumo').offsetTop - 12, behavior: 'smooth' });
+  }
+
   function atualizarResumo() {
-    var c = { certo: 0, conferir: 0, duvida: 0, nada: 0 }, feitos = 0, prontos = 0;
+    var c = { certo: 0, conferir: 0, duvida: 0, nada: 0, feito: 0 }, prontos = 0;
     itens.forEach(function (it) {
-      if (it.estado === 'feito') { feitos++; return; }
-      c[it.r.nivel]++;
-      if (it.escolha) prontos++;
+      c[categoria(it)]++;
+      if (it.estado !== 'feito' && it.escolha) prontos++;
     });
-    var bloco = function (n, t) { return n ? '<div><b>' + n + '</b>' + t + '</div>' : ''; };
-    $('resumo').innerHTML = bloco(c.certo, 'prontas') + bloco(c.conferir, 'para conferir') +
-      bloco(c.duvida, 'você escolhe') + bloco(c.nada, 'sem pessoa') + bloco(feitos, 'já na planilha');
+    if (filtro && !c[filtro]) filtro = '';
+    var bloco = function (f, n, t) {
+      return n ? '<button type="button" data-f="' + f + '"' + (filtro === f ? ' class="ativo"' : '') + '><b>' + n + '</b>' + t + '</button>' : '';
+    };
+    $('resumo').innerHTML = bloco('', itens.length, 'todas') + bloco('certo', c.certo, 'prontas') +
+      bloco('conferir', c.conferir, 'para conferir') + bloco('duvida', c.duvida, 'você escolhe') +
+      bloco('nada', c.nada, 'sem pessoa') + bloco('feito', c.feito, 'já na planilha');
+    $('resumo').querySelectorAll('button').forEach(function (b) {
+      b.onclick = function () { filtrar(b.dataset.f); };
+    });
+    var feitos = c.feito;
     $('enviar').disabled = enviando || !prontos;
     $('enviar').textContent = prontos ? 'Colocar ' + prontos + (prontos === 1 ? ' foto' : ' fotos') : 'Colocar na planilha';
     if (!enviando) {
@@ -350,6 +377,7 @@
   $('limpar').onclick = function () {
     if (enviando) return;
     itens = [];
+    filtro = '';
     $('painel').hidden = true;
     $('barra').hidden = true;
     $('drive').hidden = true;
