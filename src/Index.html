@@ -46,7 +46,9 @@
   li img, li .sem { width: 52px; height: 52px; border-radius: 12px; object-fit: cover; background: var(--cartao); flex: none; }
   .meio { flex: 1; min-width: 0; }
   .arq { font-size: 13px; color: var(--suave); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  select {
+  .sugestoes { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 2px; }
+  .sugestoes button { font-size: 13px; font-weight: 500; padding: 5px 11px; background: var(--cartao); color: var(--texto); border: 1px solid var(--linha); }
+  select, input.busca {
     width: 100%; font: inherit; color: var(--texto); background: var(--cartao); border: 1px solid var(--linha);
     border-radius: 10px; padding: 7px 10px; margin: 3px 0; -webkit-appearance: none; appearance: none;
   }
@@ -75,6 +77,14 @@
   .opcoes { display: flex; gap: 10px; margin-top: 10px; }
   .opcoes > * { flex: 1; text-align: center; padding: 11px 12px; font-size: 15px; }
   .com-fotos .opcoes { display: none; }
+  .andamento { margin-top: 18px; padding: 14px 16px; border-radius: 14px; background: var(--cartao); font-size: 15px; }
+  .andamento small { display: block; color: var(--suave); margin-top: 2px; }
+  .andamento .trilho { height: 4px; border-radius: 2px; background: var(--linha); margin-top: 10px; overflow: hidden; }
+  .andamento .trilho i { display: block; height: 100%; background: var(--texto); transition: width .4s; }
+  .guardadas-botao { margin-top: 14px; padding: 9px 16px; font-size: 15px; }
+  .grade { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 14px; margin: 16px 0 8px; }
+  .grade a { color: var(--texto); text-decoration: none; font-size: 12px; text-align: center; }
+  .grade img { width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 14px; background: var(--cartao); display: block; margin-bottom: 4px; }
   .drive { display: flex; gap: 10px; margin-top: 10px; }
   .drive input {
     flex: 1; min-width: 0; font: inherit; color: var(--texto); background: var(--cartao);
@@ -101,9 +111,14 @@
     <button id="abrirDrive" type="button">Abrir</button>
   </div>
 
+  <div class="andamento" id="andamento" hidden></div>
+  <button class="leve guardadas-botao" id="botaoGuardadas" type="button" hidden></button>
+  <div class="grade" id="guardadas" hidden></div>
+
   <div id="painel" hidden>
     <div class="resumo" id="resumo"></div>
     <ul id="lista"></ul>
+    <datalist id="pessoasLista"></datalist>
   </div>
 </main>
 
@@ -149,10 +164,11 @@
           var z = zip.files[nomes[j]];
           var curto = nomes[j].split('/').pop();
           if (z.dir || curto.charAt(0) === '.' || nomes[j].indexOf('__MACOSX') >= 0 || !ehImagem(curto)) continue;
-          novos.push({ arquivo: curto, blob: await z.async('blob') });
+          var b = await z.async('blob');
+          novos.push({ arquivo: curto, blob: b, origem: curto + '|' + b.size });
         }
       } else if (ehImagem(f.name, f.type) && f.name.charAt(0) !== '.') {
-        novos.push({ arquivo: f.name, blob: f });
+        novos.push({ arquivo: f.name, blob: f, origem: f.name + '|' + f.size });
       }
     }
     await juntar(novos);
@@ -174,7 +190,7 @@
       var resp = await chamar('apiListarPasta', link);
       $('drive').hidden = true;
       await juntar(resp.arquivos.map(function (a) {
-        return { arquivo: a.nome, driveId: a.id, url: 'https://drive.google.com/thumbnail?id=' + a.id + '&sz=w120' };
+        return { arquivo: a.nome, driveId: a.id, origem: 'drive:' + a.id, url: 'https://drive.google.com/thumbnail?id=' + a.id + '&sz=w120' };
       }));
     } catch (e) {
       $('status').textContent = 'Erro: ' + (e && e.message || e);
@@ -203,15 +219,16 @@
     $('status').textContent = 'Procurando as pessoas na planilha…';
     $('enviar').disabled = true;
     try {
-      var resp = await chamar('apiPreparar', itens.map(function (it) { return it.arquivo; }));
+      var resp = await chamar('apiPreparar', itens.map(function (it) { return { nome: it.arquivo, origem: it.origem }; }));
       pessoas = resp.pessoas;
       porChave = {};
       pessoas.forEach(function (p) { porChave[p.chave] = p; });
+      preencherLista();
       $('sub').innerHTML = 'Planilha <a href="' + resp.planilhaUrl + '" target="_blank">' + esc(resp.planilha) +
         '</a> · abas ' + resp.abas.map(esc).join(' e ');
       itens.forEach(function (it, i) {
         it.r = resp.resultado[i];
-        if (it.estado !== 'feito') it.escolha = it.r.chave;
+        if (!it.estado) it.escolha = it.r.ja ? '' : it.r.chave;
       });
       desenhar();
     } catch (e) {
@@ -223,54 +240,93 @@
     return String(s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; });
   }
 
-  function opcoesHtml(it) {
-    var html = '<option value="">— não colocar —</option>';
-    var sugestoes = it.r.opcoes.filter(function (c) { return porChave[c]; });
-    if (sugestoes.length) {
-      html += '<optgroup label="Sugestões">' + sugestoes.map(function (c) { return opcao(c, it.escolha); }).join('') + '</optgroup>';
-    }
-    html += '<optgroup label="Todos">' + pessoas.map(function (p) { return opcao(p.chave, it.escolha); }).join('') + '</optgroup>';
-    return html;
+  // Campo de busca: digite parte do nome (ou o número) e escolha na lista que aparece.
+  function rotulo(p) {
+    return p.nome + (p.numeros.length ? ' · nº ' + p.numeros.join('/') : '') + (p.temFoto ? ' · já tem foto' : '');
   }
 
-  function opcao(chave, escolha) {
-    var p = porChave[chave];
-    var extra = (p.numeros.length ? ' · nº ' + p.numeros.join('/') : '') + (p.temFoto ? ' · já tem foto' : '');
-    return '<option value="' + esc(chave) + '"' + (chave === escolha ? ' selected' : '') + '>' + esc(p.nome + extra) + '</option>';
+  function semAcento(t) {
+    return String(t || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase().trim();
+  }
+
+  function acharPorTexto(texto) {
+    var t = semAcento(texto);
+    if (!t) return '';
+    var exato = pessoas.filter(function (p) { return semAcento(rotulo(p)) === t || semAcento(p.nome) === t; });
+    if (exato.length === 1) return exato[0].chave;
+    var parte = pessoas.filter(function (p) { return semAcento(rotulo(p)).indexOf(t) >= 0; });
+    return parte.length === 1 ? parte[0].chave : null;
+  }
+
+  function preencherLista() {
+    $('pessoasLista').innerHTML = pessoas.map(function (p) { return '<option value="' + esc(rotulo(p)) + '">'; }).join('');
+  }
+
+  function sugestoesHtml(it, i) {
+    if (it.estado || it.escolha) return '';
+    var sug = it.r.opcoes.filter(function (c) { return porChave[c]; });
+    if (!sug.length) return '';
+    return '<div class="sugestoes">' + sug.map(function (c) {
+      return '<button type="button" data-i="' + i + '" data-c="' + esc(c) + '">' + esc(porChave[c].nome) + '</button>';
+    }).join('') + '</div>';
   }
 
   function desenhar() {
     $('painel').hidden = false;
     document.body.classList.add('com-fotos');
     $('rotulo').textContent = 'Adicionar mais fotos';
+    preencherLista();
     var lista = $('lista');
     lista.innerHTML = '';
     itens.forEach(function (it, i) {
-      if (filtro && categoria(it) !== filtro) return;
+      if (filtro ? categoria(it) !== filtro : categoria(it) === 'feito') return;
       if (!it.url) it.url = URL.createObjectURL(it.blob);
       var li = document.createElement('li');
-      var classe = it.estado === 'feito' ? 'ok' : it.estado === 'erro' ? 'erro' : '';
+      var classe = it.estado === 'feito' || it.estado === 'fila' ? 'ok' : it.estado === 'erro' ? 'erro' : '';
       var texto = it.msg || it.r.motivo;
       li.innerHTML = '<img loading="lazy" src="' + it.url + '" alt="" onerror="this.outerHTML=\'<div class=sem></div>\'">' +
         '<div class="meio"><div class="arq">' + esc(it.arquivo) + '</div>' +
-        '<select data-i="' + i + '"' + (it.estado === 'feito' || enviando ? ' disabled' : '') + '>' + opcoesHtml(it) + '</select>' +
+        '<input type="search" class="busca" list="pessoasLista" placeholder="Digite o nome da pessoa" data-i="' + i + '" value="' +
+        esc(it.escolha && porChave[it.escolha] ? rotulo(porChave[it.escolha]) : '') + '"' +
+        (it.estado === 'feito' || it.estado === 'fila' || enviando ? ' disabled' : '') + '>' + sugestoesHtml(it, i) +
         '<div class="motivo ' + classe + '">' + esc(texto) + '</div></div>';
       lista.appendChild(li);
     });
-    lista.querySelectorAll('select').forEach(function (s) {
-      s.onchange = function () {
-        var it = itens[+s.dataset.i];
-        it.escolha = s.value;
-        it.msg = s.value ? 'Escolhido por você.' : 'Não vai ser colocada.';
+    lista.querySelectorAll('input.busca').forEach(function (campo) {
+      var escolher = function (final) {
+        var it = itens[+campo.dataset.i];
+        var chave = acharPorTexto(campo.value);
+        if (chave === null) {
+          if (!final) return;
+          it.escolha = '';
+          it.msg = 'Não achei uma pessoa só com esse nome. Digite mais letras e escolha na lista.';
+        } else {
+          if (!final && chave && semAcento(campo.value) !== semAcento(rotulo(porChave[chave]))) return;
+          it.escolha = chave;
+          it.msg = chave ? 'Escolhido por você.' : 'Não vai ser colocada.';
+          if (chave) campo.value = rotulo(porChave[chave]);
+        }
+        var sug = campo.parentNode.querySelector('.sugestoes');
+        if (sug && it.escolha) sug.remove();
+        campo.parentNode.querySelector('.motivo').textContent = it.msg;
         atualizarResumo();
-        s.parentNode.querySelector('.motivo').textContent = it.msg;
+      };
+      campo.oninput = function () { escolher(false); };   // escolheu da lista
+      campo.onchange = function () { escolher(true); };   // saiu do campo / Enter
+    });
+    lista.querySelectorAll('.sugestoes button').forEach(function (b) {
+      b.onclick = function () {
+        var campo = lista.querySelector('input.busca[data-i="' + b.dataset.i + '"]');
+        campo.value = rotulo(porChave[b.dataset.c]);
+        campo.onchange();
       };
     });
     atualizarResumo();
   }
 
   function categoria(it) {
-    return it.estado === 'feito' ? 'feito' : it.r.nivel;
+    if (it.estado === 'feito' || it.r.ja) return 'feito';
+    return it.estado === 'fila' ? 'fila' : it.r.nivel;
   }
 
   // Tocar numa categoria mostra só ela; tocar de novo (ou em Todas) volta a mostrar tudo.
@@ -281,18 +337,18 @@
   }
 
   function atualizarResumo() {
-    var c = { certo: 0, conferir: 0, duvida: 0, nada: 0, feito: 0 }, prontos = 0;
+    var c = { certo: 0, conferir: 0, duvida: 0, nada: 0, feito: 0, fila: 0 }, prontos = 0;
     itens.forEach(function (it) {
       c[categoria(it)]++;
-      if (it.estado !== 'feito' && it.escolha) prontos++;
+      if ((!it.estado || it.estado === 'erro') && it.escolha) prontos++;
     });
     if (filtro && !c[filtro]) filtro = '';
     var bloco = function (f, n, t) {
       return n ? '<button type="button" data-f="' + f + '"' + (filtro === f ? ' class="ativo"' : '') + '><b>' + n + '</b>' + t + '</button>' : '';
     };
-    $('resumo').innerHTML = bloco('', itens.length, 'todas') + bloco('certo', c.certo, 'prontas') +
+    $('resumo').innerHTML = bloco('', itens.length - c.feito, 'todas') + bloco('certo', c.certo, 'prontas') +
       bloco('conferir', c.conferir, 'para conferir') + bloco('duvida', c.duvida, 'você escolhe') +
-      bloco('nada', c.nada, 'sem pessoa') + bloco('feito', c.feito, 'já na planilha');
+      bloco('nada', c.nada, 'sem pessoa') + bloco('fila', c.fila, 'na fila') + bloco('feito', c.feito, 'já na planilha');
     $('resumo').querySelectorAll('button').forEach(function (b) {
       b.onclick = function () { filtrar(b.dataset.f); };
     });
@@ -300,8 +356,9 @@
     $('enviar').disabled = enviando || !prontos;
     $('enviar').textContent = prontos ? 'Colocar ' + prontos + (prontos === 1 ? ' foto' : ' fotos') : 'Colocar na planilha';
     if (!enviando) {
-      $('status').textContent = feitos && !prontos ? 'Pronto. Os links estão na planilha.' :
-        prontos ? 'Confira as escolhas e toque em Colocar.' : 'Escolha a pessoa das fotos que faltam.';
+      $('status').textContent = prontos ? 'Confira as escolhas e toque em Colocar.' :
+        c.fila ? 'Fotos do Drive na fila. Pode fechar o app.' :
+        feitos ? 'Pronto. Os links estão na planilha.' : 'Escolha a pessoa das fotos que faltam.';
     }
   }
 
@@ -334,24 +391,36 @@
   }
 
   async function enviarTodas() {
-    var fila = itens.filter(function (it) { return it.escolha && it.estado !== 'feito'; });
+    var fila = itens.filter(function (it) { return it.escolha && (!it.estado || it.estado === 'erro'); });
     if (!fila.length) return;
     enviando = true;
     desenhar();
-    var feitas = 0, erros = 0;
-    for (var i = 0; i < fila.length; i++) {
-      var it = fila[i];
-      $('status').textContent = 'Colocando ' + (i + 1) + ' de ' + fila.length + '…';
+    // Fotos do Drive: vão para a fila do Google, que continua sozinha mesmo com o app fechado.
+    var doDrive = fila.filter(function (it) { return it.driveId; });
+    if (doDrive.length) {
+      $('status').textContent = 'Mandando ' + doDrive.length + ' fotos do Drive para a fila…';
       try {
-        var resp;
-        if (it.driveId) {
-          resp = await chamar('apiUsarDoDrive', { chave: it.escolha, driveId: it.driveId });
-        } else {
-          var foto = await prepararFoto(it.blob);
-          resp = await chamar('apiEnviar', {
-            chave: it.escolha, arquivo: it.arquivo, mime: foto.type || 'image/jpeg', base64: await base64(foto)
-          });
-        }
+        var est = await chamar('apiEnfileirar', doDrive.map(function (it) {
+          return { driveId: it.driveId, chave: it.escolha, arquivo: it.arquivo };
+        }));
+        doDrive.forEach(function (it) { it.estado = 'fila'; it.msg = 'Na fila. Continua mesmo se você fechar o app.'; });
+        google.script.run.processarFila();   // começa já; o Google segue sozinho depois
+        mostrarAndamento(est);
+      } catch (e) {
+        doDrive.forEach(function (it) { it.estado = 'erro'; it.msg = 'Não deu: ' + (e && e.message || e); });
+      }
+    }
+    // Fotos do PC: precisam do app aberto enquanto são enviadas. O que já foi não volta, mesmo recarregando.
+    var doPc = fila.filter(function (it) { return !it.driveId; });
+    var feitas = 0, erros = 0;
+    for (var i = 0; i < doPc.length; i++) {
+      var it = doPc[i];
+      $('status').textContent = 'Enviando ' + (i + 1) + ' de ' + doPc.length + ' do PC… deixe o app aberto.';
+      try {
+        var foto = await prepararFoto(it.blob);
+        var resp = await chamar('apiEnviar', {
+          chave: it.escolha, arquivo: it.arquivo, origem: it.origem, mime: foto.type || 'image/jpeg', base64: await base64(foto)
+        });
         it.estado = 'feito';
         it.msg = (resp.substituiu ? 'Trocou a foto em ' : 'Colocada em ') + resp.lugares.join(' e ') + '.';
         porChave[it.escolha].temFoto = true;
@@ -364,8 +433,59 @@
     }
     enviando = false;
     desenhar();
-    $('status').textContent = feitas + (feitas === 1 ? ' foto colocada' : ' fotos colocadas') +
-      (erros ? ', ' + erros + ' com erro (tente de novo).' : '.');
+    if (doPc.length) {
+      $('status').textContent = feitas + (feitas === 1 ? ' foto colocada' : ' fotos colocadas') +
+        (erros ? ', ' + erros + ' com erro (tente de novo).' : '.');
+    }
+    atualizarEstado();
+  }
+
+  /* ---------------------------------------------------------------- fila e fotos guardadas */
+
+  var espera = null;
+
+  function mostrarAndamento(est) {
+    var f = est.fila, caixa = $('andamento');
+    var naFila = {};
+    f.naFila.forEach(function (id) { naFila[id] = true; });
+    // Fotos que saíram da fila nesta tela viram "já na planilha".
+    var mudou = false;
+    itens.forEach(function (it) {
+      if (it.estado !== 'fila' || naFila[it.driveId]) return;
+      var erro = f.erros.filter(function (e) { return e.indexOf(it.arquivo + ':') === 0; })[0];
+      it.estado = erro ? 'erro' : 'feito';
+      it.msg = erro ? 'Não deu: ' + erro.slice(it.arquivo.length + 2) : 'Colocada na planilha.';
+      if (!erro && porChave[it.escolha]) porChave[it.escolha].temFoto = true;
+      mudou = true;
+    });
+    if (mudou && itens.length) desenhar();
+    if (f.faltam) {
+      var feitas = f.total - f.faltam;
+      caixa.innerHTML = 'Colocando fotos do Drive: <b>' + feitas + ' de ' + f.total + '</b>' +
+        '<small>Continua sozinho, mesmo se você fechar o app ou a planilha.</small>' +
+        '<div class="trilho"><i style="width:' + Math.round(100 * feitas / Math.max(1, f.total)) + '%"></i></div>';
+      caixa.hidden = false;
+      clearTimeout(espera);
+      espera = setTimeout(atualizarEstado, 5000);
+    } else if (f.total) {
+      caixa.innerHTML = 'Fila do Drive terminada: <b>' + f.feitas + ' de ' + f.total + '</b> colocadas' +
+        (f.erros.length ? '<small>' + f.erros.length + ' com erro: ' + esc(f.erros.slice(-3).join(' · ')) + '</small>' : '');
+      caixa.hidden = false;
+    }
+    var g = est.guardadas;
+    $('botaoGuardadas').hidden = !g.length;
+    $('botaoGuardadas').textContent = 'Fotos guardadas (' + g.length + ')';
+    $('guardadas').innerHTML = g.map(function (x) {
+      return '<a href="' + x.link + '" target="_blank"><img loading="lazy" alt="" src="https://drive.google.com/thumbnail?id=' +
+        x.fileId + '&sz=w200">' + esc(x.nome) + '</a>';
+    }).join('');
+  }
+
+  function atualizarEstado() {
+    chamar('apiEstado').then(mostrarAndamento).catch(function () {
+      clearTimeout(espera);
+      espera = setTimeout(atualizarEstado, 15000);
+    });
   }
 
   $('entrada').onchange = function (e) { abrirArquivos(e.target.files); e.target.value = ''; };
@@ -374,6 +494,8 @@
   $('abrirDrive').onclick = abrirDrive;
   $('linkDrive').onkeydown = function (e) { if (e.key === 'Enter') abrirDrive(); };
   $('enviar').onclick = enviarTodas;
+  $('botaoGuardadas').onclick = function () { $('guardadas').hidden = !$('guardadas').hidden; };
+  atualizarEstado();
   $('limpar').onclick = function () {
     if (enviando) return;
     itens = [];
