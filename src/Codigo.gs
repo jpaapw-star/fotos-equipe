@@ -6,7 +6,7 @@
  * Planilha: PLANILHA_PADRAO, ou a propriedade do script PLANILHA_ID se existir.
  */
 
-var VERSAO = '1.1.0';
+var VERSAO = '1.2.0';
 var PLANILHA_PADRAO = '1sCB4bhqsPXJqm8gaMJNAoZb2EmfGLaevwBvT_QLaQBA';
 var PASTA_NOME = 'Fotos da equipe';
 
