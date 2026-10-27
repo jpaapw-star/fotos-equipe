@@ -6,7 +6,7 @@
  * Planilha: PLANILHA_PADRAO, ou a propriedade do script PLANILHA_ID se existir.
  */
 
-var VERSAO = '1.0.0';
+var VERSAO = '1.1.0';
 var PLANILHA_PADRAO = '1sCB4bhqsPXJqm8gaMJNAoZb2EmfGLaevwBvT_QLaQBA';
 var PASTA_NOME = 'Fotos da equipe';
 
@@ -103,6 +103,11 @@ function apiEnviar(envio) {
   arquivo.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
   var link = 'https://drive.google.com/file/d/' + arquivo.getId() + '/view';
 
+  return gravarLink_(ss, pessoa, link);
+}
+
+// Escreve o link na coluna FOTOS de todas as abas onde a pessoa aparece.
+function gravarLink_(ss, pessoa, link) {
   var trava = LockService.getScriptLock();
   trava.waitLock(30000);
   try {
@@ -118,6 +123,60 @@ function apiEnviar(envio) {
     substituiu: pessoa.temFoto,
     lugares: pessoa.lugares.map(function (l) { return l.aba + ' linha ' + l.linha; })
   };
+}
+
+/* ------------------------------------------------------------------ pasta do Drive */
+
+function idDaPasta_(link) {
+  var t = String(link || '').trim();
+  var m = t.match(/\/folders\/([A-Za-z0-9_-]{10,})/) || t.match(/[?&]id=([A-Za-z0-9_-]{10,})/) || t.match(/^([A-Za-z0-9_-]{10,})$/);
+  if (!m) throw new Error('Isso não parece um link de pasta do Drive.');
+  return m[1];
+}
+
+// Lista as fotos da pasta do Drive (e das subpastas). As fotos não são movidas nem renomeadas.
+function apiListarPasta(link) {
+  var pasta;
+  try {
+    pasta = DriveApp.getFolderById(idDaPasta_(link));
+  } catch (e) {
+    throw new Error('Não consegui abrir essa pasta. Confira o link e se ela está no seu Drive ou compartilhada com você.');
+  }
+  var arquivos = [], pilha = [pasta];
+  while (pilha.length && arquivos.length < 2000) {
+    var atual = pilha.shift();
+    var fs = atual.getFiles();
+    while (fs.hasNext()) {
+      var f = fs.next();
+      var tipo = f.getMimeType() || '';
+      if (tipo.indexOf('image/') === 0 || /\.(jpe?g|png|webp|heic|heif)$/i.test(f.getName())) {
+        arquivos.push({ id: f.getId(), nome: f.getName() });
+      }
+    }
+    var subs = atual.getFolders();
+    while (subs.hasNext()) pilha.push(subs.next());
+  }
+  return { pasta: pasta.getName(), arquivos: arquivos };
+}
+
+// Usa a foto que já está no Drive: libera "qualquer pessoa com o link vê" e grava o link.
+// Se a foto for de outra pessoa (não dá para mudar o compartilhamento), faz uma cópia na pasta "Fotos da equipe".
+function apiUsarDoDrive(envio) {
+  if (!envio || !envio.chave || !envio.driveId) throw new Error('Foto ou pessoa faltando.');
+  var ss = SpreadsheetApp.openById(planilhaId_());
+  var pessoa = lerPessoas_(ss).pessoas.filter(function (p) { return p.chave === envio.chave; })[0];
+  if (!pessoa) throw new Error('A pessoa não está mais na planilha.');
+  var arquivo = DriveApp.getFileById(envio.driveId);
+  try {
+    if (arquivo.getSharingAccess() !== DriveApp.Access.ANYONE_WITH_LINK &&
+        arquivo.getSharingAccess() !== DriveApp.Access.ANYONE) {
+      arquivo.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+    }
+  } catch (e) {
+    arquivo = arquivo.makeCopy(arquivo.getName(), pasta_(ss));
+    arquivo.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+  }
+  return gravarLink_(ss, pessoa, 'https://drive.google.com/file/d/' + arquivo.getId() + '/view');
 }
 
 // Pasta "Fotos da equipe" ao lado da planilha (criada na primeira vez).
