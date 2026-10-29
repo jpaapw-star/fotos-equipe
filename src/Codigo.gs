@@ -6,7 +6,7 @@
  * Planilha: PLANILHA_PADRAO, ou a propriedade do script PLANILHA_ID se existir.
  */
 
-var VERSAO = '1.3.0';
+var VERSAO = '1.4.0';
 var PLANILHA_PADRAO = '1sCB4bhqsPXJqm8gaMJNAoZb2EmfGLaevwBvT_QLaQBA';
 var PASTA_NOME = 'Fotos da equipe';
 
@@ -303,6 +303,82 @@ function apiEstado() {
       naFila: d.fila.map(function (x) { return x.driveId; }) },
     guardadas: guardadas
   };
+}
+
+/* ------------------------------------------------------------------ editar fotos guardadas */
+
+// Lista de pessoas para o campo de busca das fotos guardadas.
+function apiPessoas() {
+  return lerPessoas_(SpreadsheetApp.openById(planilhaId_())).pessoas.map(function (p) {
+    return { chave: p.chave, nome: p.nome, numeros: p.numeros, temFoto: p.temFoto };
+  });
+}
+
+// Apaga o link da pessoa nas abas, só onde a célula ainda tem o link desta foto.
+function limparLink_(ss, pessoa, link) {
+  pessoa.lugares.forEach(function (l) {
+    var c = ss.getSheetByName(l.aba).getRange(l.linha, l.coluna);
+    if (String(c.getValue()).trim() === link) c.setValue('');
+  });
+}
+
+// A foto guardada era de outra pessoa: passa para a pessoa certa (nome do arquivo e links na planilha).
+function apiTrocarPessoa(pedido) {
+  if (!pedido || !pedido.de || !pedido.para) throw new Error('Pessoa faltando.');
+  if (pedido.de === pedido.para) return apiEstado();
+  var ss = SpreadsheetApp.openById(planilhaId_());
+  var pessoas = lerPessoas_(ss).pessoas;
+  var nova = acharPessoa_(ss, pedido.para, pessoas);
+  var trava = LockService.getScriptLock();
+  trava.waitLock(30000);
+  try {
+    var d = lerDados_();
+    var foto = d.registro[pedido.de];
+    if (!foto) throw new Error('Essa foto não está mais guardada.');
+    var antiga = pessoas.filter(function (p) { return p.chave === pedido.de; })[0];
+    if (antiga) limparLink_(ss, antiga, foto.link);
+    // Se a pessoa certa já tinha foto, a dela vai para a lixeira (fica só a foto trocada).
+    var dela = d.registro[nova.chave];
+    if (dela && dela.fileId && dela.fileId !== foto.fileId) {
+      try { DriveApp.getFileById(dela.fileId).setTrashed(true); } catch (e) { /* já apagada */ }
+    }
+    var arquivo = DriveApp.getFileById(foto.fileId);
+    var ext = (arquivo.getName().match(/\.([A-Za-z0-9]{2,5})$/) || [, 'jpg'])[1];
+    arquivo.setName((nova.numeros.length ? nova.numeros[0] + ' - ' : '') + nova.nome + '.' + ext);
+    nova.lugares.forEach(function (l) {
+      ss.getSheetByName(l.aba).getRange(l.linha, l.coluna).setValue(foto.link);
+    });
+    SpreadsheetApp.flush();
+    delete d.registro[pedido.de];
+    foto.nome = nova.nome;
+    d.registro[nova.chave] = foto;
+    salvarDados_(d);
+  } finally {
+    trava.releaseLock();
+  }
+  return apiEstado();
+}
+
+// Exclui a foto guardada: vai para a lixeira do Drive e o link sai da planilha.
+function apiExcluirFoto(chave) {
+  var ss = SpreadsheetApp.openById(planilhaId_());
+  var pessoas = lerPessoas_(ss).pessoas;
+  var trava = LockService.getScriptLock();
+  trava.waitLock(30000);
+  try {
+    var d = lerDados_();
+    var foto = d.registro[chave];
+    if (!foto) return apiEstado();
+    var pessoa = pessoas.filter(function (p) { return p.chave === chave; })[0];
+    if (pessoa) limparLink_(ss, pessoa, foto.link);
+    SpreadsheetApp.flush();
+    try { DriveApp.getFileById(foto.fileId).setTrashed(true); } catch (e) { /* já apagada */ }
+    delete d.registro[chave];
+    salvarDados_(d);
+  } finally {
+    trava.releaseLock();
+  }
+  return apiEstado();
 }
 
 /* ------------------------------------------------------------------ pasta do Drive */
