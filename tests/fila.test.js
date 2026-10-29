@@ -28,6 +28,7 @@ function montar() {
       setContent: (t) => { f.conteudo = t; },
       getBlob: () => ({ getDataAsString: () => f.conteudo }),
       makeCopy: (n) => novoArquivo(n, f.conteudo),
+      setName: (n) => { f.nome = n; },
     };
     return f;
   }
@@ -43,6 +44,7 @@ function montar() {
     getRange: (r, c, nr = 1, nc = 1) => ({
       getValues: () => linhas[nome].slice(r - 1, r - 1 + nr).map((l) => l.slice(c - 1, c - 1 + nc)),
       setValue: (v) => { linhas[nome][r - 1][c - 1] = v; },
+      getValue: () => linhas[nome][r - 1][c - 1],
     }),
   });
   const ss = {
@@ -110,4 +112,27 @@ test('foto nova da mesma pessoa apaga a antiga e a mesma foto não volta para a 
   assert.strictEqual(prep.resultado[0].ja, true);
   assert.strictEqual(prep.resultado[1].ja, undefined);
   assert.match(prep.resultado[1].motivo, /trocar a atual/);
+});
+
+test('trocar a pessoa de uma foto guardada e excluir', () => {
+  const m = montar();
+  m.ctx.apiEnviar({ chave: 'BRUNO VITOR', arquivo: 'x.jpg', origem: 'x|1', mime: 'image/jpeg', base64: 'a' });
+  m.ctx.apiEnviar({ chave: 'KAREN', arquivo: 'k.jpg', origem: 'k|1', mime: 'image/jpeg', base64: 'b' });
+  const foto = m.ctx.apiEstado().guardadas.find((g) => g.chave === 'BRUNO VITOR');
+  const daKaren = m.ctx.apiEstado().guardadas.find((g) => g.chave === 'KAREN');
+  // A foto "do Bruno" era na verdade da Karen.
+  const est = m.ctx.apiTrocarPessoa({ de: 'BRUNO VITOR', para: 'KAREN' });
+  assert.deepStrictEqual(est.guardadas.map((g) => g.chave), ['KAREN']);
+  assert.strictEqual(est.guardadas[0].fileId, foto.fileId);
+  assert.strictEqual(m.arquivos[foto.fileId].nome, '76 - KAREN.jpg');
+  assert.strictEqual(m.arquivos[daKaren.fileId].lixo, true, 'foto antiga da Karen foi para a lixeira');
+  assert.strictEqual(m.linhas['Página1'][1][2], '', 'link saiu do Bruno');
+  assert.strictEqual(m.linhas['FUNÇÕES'][2][2], '');
+  assert.strictEqual(m.linhas['Página1'][2][2], foto.link, 'link foi para a Karen');
+  assert.strictEqual(m.linhas['FUNÇÕES'][1][2], foto.link);
+  const depois = m.ctx.apiExcluirFoto('KAREN');
+  assert.strictEqual(depois.guardadas.length, 0);
+  assert.strictEqual(m.arquivos[foto.fileId].lixo, true);
+  assert.strictEqual(m.linhas['Página1'][2][2], '');
+  assert.strictEqual(m.linhas['FUNÇÕES'][1][2], '');
 });

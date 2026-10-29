@@ -17,7 +17,7 @@ App da Web (Google Apps Script) que coloca o link da foto de cada pessoa na colu
   ou a planilha fechados. Fotos do PC precisam do app aberto enquanto são enviadas.
 - **Não repete**: foto que já foi colocada não aparece de novo (fica em "já na planilha"). Foto nova da mesma pessoa
   troca a antiga (a antiga vai para a lixeira do Drive).
-- **Fotos guardadas**: toda foto fica guardada na pasta do app ("Fotos da equipe") e aparece em "Fotos guardadas".
+- **Fotos guardadas**: toda foto fica guardada na pasta do app ("Fotos da equipe") e aparece em "Fotos guardadas", onde dá para **Trocar** a pessoa (nome errado) ou **Excluir** a foto (sai da planilha e vai para a lixeira).
 - **Busca**: em cada foto, digite parte do nome ou o número para escolher a pessoa.
 
 Instalação: [docs/INSTALACAO.md](docs/INSTALACAO.md).

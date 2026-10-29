@@ -1,6 +1,6 @@
 {
   "name": "fotos-equipe",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "private": true,
   "description": "Fotos da equipe — coloca o link da foto de cada pessoa na planilha (Google Apps Script)",
   "scripts": {
