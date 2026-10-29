@@ -24,7 +24,7 @@ Abra o link do app logado na sua conta Google e aceite o pedido de acesso (plani
 
 ## Bom saber
 
-- Só você abre o app (ele grava como você). Você precisa poder editar a planilha.
+- Qualquer pessoa com o link e uma conta Google (qualquer e-mail) abre o app. Ele grava como você, então os outros não precisam ter acesso à planilha nem à pasta. Você precisa poder editar a planilha.
 - Ele só escreve na coluna FOTOS. As outras colunas não mudam.
 - Para usar outra planilha: no projeto do Apps Script › Configurações do projeto › Propriedades do script,
   crie `PLANILHA_ID` com o ID da planilha.
