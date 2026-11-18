@@ -6,7 +6,7 @@
  * Planilha: PLANILHA_PADRAO, ou a propriedade do script PLANILHA_ID se existir.
  */
 
-var VERSAO = '1.4.0';
+var VERSAO = '1.5.0';
 var PLANILHA_PADRAO = '1sCB4bhqsPXJqm8gaMJNAoZb2EmfGLaevwBvT_QLaQBA';
 var PASTA_NOME = 'Fotos da equipe';
 
@@ -52,10 +52,11 @@ function lerPessoas_(ss) {
       var chave = normalizar_(nome);
       if (!chave) continue;
       var p = mapa[chave];
-      if (!p) { p = mapa[chave] = { chave: chave, nome: nome, numeros: [], lugares: [], temFoto: false }; lista.push(p); }
+      if (!p) { p = mapa[chave] = { chave: chave, nome: nome, numeros: [], lugares: [], links: [], temFoto: false }; lista.push(p); }
       var num = col.numero !== undefined ? String(valores[r][col.numero]).trim() : '';
       if (num !== '' && p.numeros.indexOf(num) < 0) p.numeros.push(num);
-      if (String(valores[r][col.foto] || '').trim()) p.temFoto = true;
+      var link = String(valores[r][col.foto] || '').trim();
+      if (link) { p.temFoto = true; if (p.links.indexOf(link) < 0) p.links.push(link); }
       p.lugares.push({ aba: aba.getName(), linha: r + 1, coluna: col.foto + 1 });
     }
   });
@@ -72,6 +73,7 @@ function apiPreparar(arquivos) {
   arquivos = (arquivos || []).map(function (a) { return typeof a === 'string' ? { nome: a, origem: '' } : a; });
   var ss = SpreadsheetApp.openById(planilhaId_());
   var dados = lerPessoas_(ss);
+  sincronizarRegistro_(dados.pessoas);
   var reg = lerDados_().registro;
   var resultado = combinar_(arquivos.map(function (a) { return a.nome; }), dados.pessoas);
   marcarJaColocadas_(resultado, arquivos, dados.pessoas, reg);
@@ -291,12 +293,46 @@ function processarFila() {
   }
 }
 
+function idDoLink_(link) {
+  var t = String(link || '');
+  var m = t.match(/\/d\/([A-Za-z0-9_-]+)/) || t.match(/[?&]id=([A-Za-z0-9_-]+)/);
+  return m ? m[1] : '';
+}
+
+// A planilha manda: cada foto guardada fica com a pessoa que tem o link dela na planilha
+// (nome e número podem ter mudado). Foto sem ninguém na planilha continua guardada, marcada.
+function sincronizarRegistro_(pessoas) {
+  var dono = {};
+  pessoas.forEach(function (p) {
+    p.links.forEach(function (l) { var id = idDoLink_(l); if (id && !dono[id]) dono[id] = p; });
+  });
+  var trava = LockService.getScriptLock();
+  trava.waitLock(30000);
+  try {
+    var d = lerDados_(), novo = {}, mudou = false;
+    Object.keys(d.registro).forEach(function (c) {
+      var r = d.registro[c], p = dono[r.fileId];
+      var chave = p && !novo[p.chave] ? p.chave : c;
+      if (novo[chave]) chave = c + ' (' + r.fileId + ')';
+      if (chave !== c) mudou = true;
+      if (p && r.nome !== p.nome) { r.nome = p.nome; mudou = true; }
+      if (!!r.semPessoa === !!p) { r.semPessoa = !p; mudou = true; }
+      novo[chave] = r;
+    });
+    if (mudou) { d.registro = novo; salvarDados_(d); }
+  } finally {
+    trava.releaseLock();
+  }
+}
+
 // O que o app mostra ao abrir: andamento da fila e as fotos guardadas.
-function apiEstado() {
+// Com sincronizar = true, antes confere as fotos guardadas com a planilha.
+function apiEstado(sincronizar) {
+  if (sincronizar) sincronizarRegistro_(lerPessoas_(SpreadsheetApp.openById(planilhaId_())).pessoas);
   var d = lerDados_();
   var guardadas = Object.keys(d.registro).map(function (c) {
     var r = d.registro[c];
-    return { chave: c, nome: r.nome, link: r.link, fileId: r.fileId, quando: r.quando };
+    return { chave: c, nome: r.nome, link: r.link, fileId: r.fileId, quando: r.quando, semPessoa: !!r.semPessoa };
   }).sort(function (a, b) { return a.nome.localeCompare(b.nome, 'pt-BR'); });
   return {
     fila: { total: d.total, feitas: d.feitas, faltam: d.fila.length, erros: d.erros.slice(-20),

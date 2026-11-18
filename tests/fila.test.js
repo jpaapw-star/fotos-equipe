@@ -136,3 +136,25 @@ test('trocar a pessoa de uma foto guardada e excluir', () => {
   assert.strictEqual(m.linhas['Página1'][2][2], '');
   assert.strictEqual(m.linhas['FUNÇÕES'][1][2], '');
 });
+
+test('fotos guardadas seguem a planilha quando o nome muda', () => {
+  const m = montar();
+  m.ctx.apiEnviar({ chave: 'KAREN', arquivo: 'k.jpg', origem: 'k|1', mime: 'image/jpeg', base64: 'a' });
+  m.ctx.apiEnviar({ chave: 'BRUNO VITOR', arquivo: 'b.jpg', origem: 'b|1', mime: 'image/jpeg', base64: 'b' });
+  // Na planilha nova, o nome virou completo e o Bruno saiu.
+  m.linhas['Página1'][2][0] = 'KAREN KATLIN OLIVEIRA';
+  m.linhas['FUNÇÕES'][1][0] = 'KAREN KATLIN OLIVEIRA';
+  m.linhas['Página1'][1] = ['', 1, ''];
+  m.linhas['FUNÇÕES'][2] = ['', 1, ''];
+  const est = m.ctx.apiEstado(true);
+  const karen = est.guardadas.find((g) => g.nome === 'KAREN KATLIN OLIVEIRA');
+  assert.ok(karen, 'foto foi para o nome novo');
+  assert.strictEqual(karen.chave, 'KAREN KATLIN OLIVEIRA');
+  assert.strictEqual(karen.semPessoa, false);
+  const bruno = est.guardadas.find((g) => g.chave === 'BRUNO VITOR');
+  assert.strictEqual(bruno.semPessoa, true, 'foto continua guardada, marcada');
+  // Trocar e excluir funcionam com o nome novo.
+  const depois = m.ctx.apiExcluirFoto('KAREN KATLIN OLIVEIRA');
+  assert.strictEqual(depois.guardadas.length, 1);
+  assert.strictEqual(m.linhas['Página1'][2][2], '');
+});
