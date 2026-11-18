@@ -84,6 +84,7 @@
   .guardadas-botao { margin-top: 14px; padding: 9px 16px; font-size: 15px; }
   .grade { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 14px; margin: 16px 0 8px; }
   .grade .cartao { font-size: 12px; text-align: center; }
+  .grade .sem { color: var(--suave); }
   .grade a { color: var(--texto); text-decoration: none; }
   .grade .acoes { display: flex; gap: 4px; justify-content: center; margin-top: 4px; }
   .grade .acoes button { font-size: 12px; font-weight: 500; padding: 4px 9px; background: var(--cartao); color: var(--texto); border: 1px solid var(--linha); }
@@ -489,7 +490,7 @@
     if (editando) return;
     $('guardadas').innerHTML = g.map(function (x) {
       return '<div class="cartao" data-c="' + esc(x.chave) + '"><a href="' + x.link + '" target="_blank">' +
-        '<img loading="lazy" alt="" src="https://drive.google.com/thumbnail?id=' + x.fileId + '&sz=w200">' + esc(x.nome) + '</a>' +
+        '<img loading="lazy" alt="" src="https://drive.google.com/thumbnail?id=' + x.fileId + '&sz=w200">' + esc(x.nome) + (x.semPessoa ? '<br><span class="sem">sem pessoa na planilha</span>' : '') + '</a>' +
         '<div class="acoes"><button type="button" data-acao="trocar">Trocar</button>' +
         '<button type="button" data-acao="excluir">Excluir</button></div></div>';
     }).join('');
@@ -569,7 +570,8 @@
   $('linkDrive').onkeydown = function (e) { if (e.key === 'Enter') abrirDrive(); };
   $('enviar').onclick = enviarTodas;
   $('botaoGuardadas').onclick = function () { $('guardadas').hidden = !$('guardadas').hidden; };
-  atualizarEstado();
+  // Ao abrir: confere as fotos guardadas com a planilha (nomes e números novos).
+  chamar('apiEstado', true).then(mostrarAndamento).catch(atualizarEstado);
   $('limpar').onclick = function () {
     if (enviando) return;
     itens = [];
