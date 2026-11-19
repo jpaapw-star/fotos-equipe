@@ -158,3 +158,11 @@ test('fotos guardadas seguem a planilha quando o nome muda', () => {
   assert.strictEqual(depois.guardadas.length, 1);
   assert.strictEqual(m.linhas['Página1'][2][2], '');
 });
+
+test('aba com título NOME COMPLETO também recebe a foto', () => {
+  const m = montar();
+  m.linhas['FUNÇÕES'][0][0] = 'NOME COMPLETO';
+  m.ctx.apiEnviar({ chave: 'KAREN', arquivo: 'k.jpg', origem: 'k|1', mime: 'image/jpeg', base64: 'a' });
+  assert.match(m.linhas['FUNÇÕES'][1][2], /^https:/);
+  assert.strictEqual(m.linhas['FUNÇÕES'][1][2], m.linhas['Página1'][2][2]);
+});

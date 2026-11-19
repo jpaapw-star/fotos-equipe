@@ -6,7 +6,7 @@
  * Planilha: PLANILHA_PADRAO, ou a propriedade do script PLANILHA_ID se existir.
  */
 
-var VERSAO = '1.5.0';
+var VERSAO = '1.6.0';
 var PLANILHA_PADRAO = '1sCB4bhqsPXJqm8gaMJNAoZb2EmfGLaevwBvT_QLaQBA';
 var PASTA_NOME = 'Fotos da equipe';
 
@@ -28,7 +28,7 @@ function colunas_(valores) {
     var col = {};
     valores[r].forEach(function (v, i) {
       var t = normalizar_(v);
-      if (t === 'NOME' && col.nome === undefined) col.nome = i;
+      if ((t === 'NOME' || t === 'NOME COMPLETO') && col.nome === undefined) col.nome = i;
       else if ((t === 'FOTO' || t === 'FOTOS') && col.foto === undefined) col.foto = i;
       else if (t.indexOf('NUMERO') === 0 && col.numero === undefined) col.numero = i;
     });
