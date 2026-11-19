@@ -2,7 +2,7 @@
 
 App da Web (Google Apps Script) que coloca o link da foto de cada pessoa na coluna **FOTOS** da planilha
 "IDENTIFICAÇÃO FUNCIONARIOS EMANX", em todas as abas que têm as colunas NOME e FOTOS
-(hoje a aba NUMERO PRODUCAO). Abas sem essas duas colunas são ignoradas.
+(hoje as abas NUMERO PRODUCAO e FUNCIONÁRIOS; o título NOME COMPLETO também vale). Abas sem essas duas colunas são ignoradas.
 
 - Você escolhe as fotos (várias ou um .zip). O app acha a pessoa pelo nome do arquivo (nome inteiro, parte
   do nome ou número identificador; sem diferença de acento ou maiúscula).
