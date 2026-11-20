@@ -217,3 +217,12 @@ test('foto que passou para outra pessoa enquanto chegava foto nova não vai para
   assert.strictEqual(m.arquivos[daKaren.fileId].lixo, false, 'a foto do BRUNO continua');
   assert.strictEqual(m.linhas['Página1'][1][2], daKaren.link);
 });
+
+test('erro do Google diz em qual passo foi', () => {
+  const m = montar();
+  m.ctx.apiEstado();
+  const dados = Object.values(m.arquivos).find((f) => f.nome === 'dados-do-app.json');
+  dados.setContent = () => { throw new Error('Acesso negado: DriveApp.'); };
+  assert.throws(() => m.ctx.apiEnviar({ chave: 'KAREN', arquivo: 'k.jpg', origem: 'k|1', mime: 'image/jpeg', base64: 'a' }),
+    /Não deu ao salvar o registro do app: Acesso negado: DriveApp\./);
+});

@@ -6,7 +6,7 @@
  * Planilha: PLANILHA_PADRAO, ou a propriedade do script PLANILHA_ID se existir.
  */
 
-var VERSAO = '1.7.0';
+var VERSAO = '1.7.1';
 var PLANILHA_PADRAO = '1sCB4bhqsPXJqm8gaMJNAoZb2EmfGLaevwBvT_QLaQBA';
 var PASTA_NOME = 'Fotos da equipe';
 
@@ -143,14 +143,14 @@ function guardarFoto_(ss, pessoa, fonte, origem) {
   var arquivo;
   if (fonte.blob) {
     fonte.blob.setName(nomeArquivo);
-    arquivo = pasta.createFile(fonte.blob);
+    arquivo = passo_('criar a foto na pasta', function () { return pasta.createFile(fonte.blob); });
   } else {
-    arquivo = DriveApp.getFileById(fonte.driveId).makeCopy(nomeArquivo, pasta);
+    arquivo = passo_('copiar a foto do Drive', function () { return DriveApp.getFileById(fonte.driveId).makeCopy(nomeArquivo, pasta); });
   }
   var link = 'https://drive.google.com/file/d/' + arquivo.getId() + '/view';
   var gravou = false;
   try {
-    arquivo.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+    passo_('liberar o link da foto', function () { arquivo.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW); });
 
     // Fotos antigas com o mesmo nome: procura antes de pegar a vez, para não segurar os outros.
     var apagar = [];
@@ -167,12 +167,14 @@ function guardarFoto_(ss, pessoa, fonte, origem) {
       var antiga = dados.registro[pessoa.chave];
       if (antiga && antiga.fileId) apagar.push(antiga.fileId);
       // Duas fotos da mesma pessoa ao mesmo tempo: a outra pode ter mandado esta para a lixeira. A última vale.
-      if (arquivo.isTrashed()) arquivo.setTrashed(false);
+      passo_('conferir a foto na pasta', function () { if (arquivo.isTrashed()) arquivo.setTrashed(false); });
       gravou = true;
-      pessoa.lugares.forEach(function (l) {
-        ss.getSheetByName(l.aba).getRange(l.linha, l.coluna).setValue(link);
+      passo_('escrever o link na planilha', function () {
+        pessoa.lugares.forEach(function (l) {
+          ss.getSheetByName(l.aba).getRange(l.linha, l.coluna).setValue(link);
+        });
+        SpreadsheetApp.flush();
       });
-      SpreadsheetApp.flush();
       dados.registro[pessoa.chave] = { nome: pessoa.nome, fileId: arquivo.getId(), link: link, origem: origem,
         quando: new Date().toISOString() };
       salvarDados_(dados);
@@ -201,6 +203,17 @@ function guardarFoto_(ss, pessoa, fonte, origem) {
 }
 
 /* ------------------------------------------------------------------ registro e fila (continuam sem o app aberto) */
+
+// Diz em qual passo o Google recusou (ex.: "Não deu ao salvar o registro do app: Acesso negado: DriveApp.").
+function passo_(nome, fn) {
+  try {
+    return fn();
+  } catch (e) {
+    var msg = String(e && e.message || e);
+    if (msg.indexOf('Não deu ao ') === 0) throw e;
+    throw new Error('Não deu ao ' + nome + ': ' + msg);
+  }
+}
 
 // Pega a vez de mexer na planilha e no registro. Muita gente ao mesmo tempo: espera até 2 minutos.
 function esperarVez_() {
@@ -232,7 +245,7 @@ function dadosVazios_() {
 // Se o Drive falhar na leitura, dá erro (tente de novo) em vez de seguir com um registro vazio:
 // seguir vazio apagaria a lista de fotos guardadas na próxima gravação.
 function lerDados_() {
-  var texto = arquivoDados_().getBlob().getDataAsString();
+  var texto = passo_('ler o registro do app', function () { return arquivoDados_().getBlob().getDataAsString(); });
   var v = dadosVazios_();
   if (!String(texto || '').trim()) return v;
   var d = JSON.parse(texto);
@@ -242,7 +255,7 @@ function lerDados_() {
 }
 
 function salvarDados_(d) {
-  arquivoDados_().setContent(JSON.stringify(d));
+  passo_('salvar o registro do app', function () { arquivoDados_().setContent(JSON.stringify(d)); });
 }
 
 // Fotos do Drive: entram numa fila que o Google processa sozinho, mesmo com o app fechado.
@@ -411,12 +424,14 @@ function apiTrocarPessoa(pedido) {
     if (!foto) throw new Error('Essa foto não está mais guardada.');
     // Primeiro o link vai para a pessoa certa, depois sai da errada e por último a foto antiga dela vai para a
     // lixeira: se o Drive falhar no meio, nenhum link fica apontando para foto apagada.
-    nova.lugares.forEach(function (l) {
-      ss.getSheetByName(l.aba).getRange(l.linha, l.coluna).setValue(foto.link);
+    passo_('escrever o link na planilha', function () {
+      nova.lugares.forEach(function (l) {
+        ss.getSheetByName(l.aba).getRange(l.linha, l.coluna).setValue(foto.link);
+      });
+      var antiga = pessoas.filter(function (p) { return p.chave === pedido.de; })[0];
+      if (antiga) limparLink_(ss, antiga, foto.link);
+      SpreadsheetApp.flush();
     });
-    var antiga = pessoas.filter(function (p) { return p.chave === pedido.de; })[0];
-    if (antiga) limparLink_(ss, antiga, foto.link);
-    SpreadsheetApp.flush();
     var dela = d.registro[nova.chave];
     delete d.registro[pedido.de];
     foto.nome = nova.nome;
