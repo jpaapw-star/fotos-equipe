@@ -6,13 +6,14 @@
  * Planilha: PLANILHA_PADRAO, ou a propriedade do script PLANILHA_ID se existir.
  */
 
-var VERSAO = '1.7.1';
+var VERSAO = '1.8.0';
 var PLANILHA_PADRAO = '1sCB4bhqsPXJqm8gaMJNAoZb2EmfGLaevwBvT_QLaQBA';
 var PASTA_NOME = 'Fotos da equipe';
 
 function doGet() {
   return HtmlService.createTemplateFromFile('Index').evaluate()
     .setTitle('Fotos da equipe')
+    .setFaviconUrl('https://jpaapw-star.github.io/painel/apps/icone-192.png')
     .addMetaTag('viewport', 'width=device-width, initial-scale=1, viewport-fit=cover');
 }
 
