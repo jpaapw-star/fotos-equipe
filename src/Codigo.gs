@@ -6,7 +6,7 @@
  * Planilha: PLANILHA_PADRAO, ou a propriedade do script PLANILHA_ID se existir.
  */
 
-var VERSAO = '1.6.0';
+var VERSAO = '1.6.1';
 var PLANILHA_PADRAO = '1sCB4bhqsPXJqm8gaMJNAoZb2EmfGLaevwBvT_QLaQBA';
 var PASTA_NOME = 'Fotos da equipe';
 
@@ -378,9 +378,12 @@ function apiTrocarPessoa(pedido) {
     if (dela && dela.fileId && dela.fileId !== foto.fileId) {
       try { DriveApp.getFileById(dela.fileId).setTrashed(true); } catch (e) { /* já apagada */ }
     }
-    var arquivo = DriveApp.getFileById(foto.fileId);
-    var ext = (arquivo.getName().match(/\.([A-Za-z0-9]{2,5})$/) || [, 'jpg'])[1];
-    arquivo.setName((nova.numeros.length ? nova.numeros[0] + ' - ' : '') + nova.nome + '.' + ext);
+    // Renomear o arquivo é só para organizar a pasta: se o Drive recusar, a troca continua.
+    try {
+      var arquivo = DriveApp.getFileById(foto.fileId);
+      var ext = (arquivo.getName().match(/\.([A-Za-z0-9]{2,5})$/) || [, 'jpg'])[1];
+      arquivo.setName((nova.numeros.length ? nova.numeros[0] + ' - ' : '') + nova.nome + '.' + ext);
+    } catch (e) { console.warn('Não renomeou ' + foto.fileId + ': ' + (e && e.message || e)); }
     nova.lugares.forEach(function (l) {
       ss.getSheetByName(l.aba).getRange(l.linha, l.coluna).setValue(foto.link);
     });

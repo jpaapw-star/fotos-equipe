@@ -166,3 +166,15 @@ test('aba com título NOME COMPLETO também recebe a foto', () => {
   assert.match(m.linhas['FUNÇÕES'][1][2], /^https:/);
   assert.strictEqual(m.linhas['FUNÇÕES'][1][2], m.linhas['Página1'][2][2]);
 });
+
+test('trocar continua mesmo se o Drive recusar renomear o arquivo', () => {
+  const m = montar();
+  m.ctx.console = { warn: () => {} };
+  m.ctx.apiEnviar({ chave: 'BRUNO VITOR', arquivo: 'x.jpg', origem: 'x|1', mime: 'image/jpeg', base64: 'a' });
+  const foto = m.ctx.apiEstado().guardadas[0];
+  m.arquivos[foto.fileId].setName = () => { throw new Error('Acesso negado: DriveApp.'); };
+  const est = m.ctx.apiTrocarPessoa({ de: 'BRUNO VITOR', para: 'KAREN' });
+  assert.deepStrictEqual(est.guardadas.map((g) => g.chave), ['KAREN']);
+  assert.strictEqual(m.linhas['Página1'][2][2], foto.link);
+  assert.strictEqual(m.linhas['Página1'][1][2], '');
+});
