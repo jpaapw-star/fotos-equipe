@@ -6,7 +6,7 @@
  * Planilha: PLANILHA_PADRAO, ou a propriedade do script PLANILHA_ID se existir.
  */
 
-var VERSAO = '1.6.0';
+var VERSAO = '1.7.0';
 var PLANILHA_PADRAO = '1sCB4bhqsPXJqm8gaMJNAoZb2EmfGLaevwBvT_QLaQBA';
 var PASTA_NOME = 'Fotos da equipe';
 
@@ -73,7 +73,7 @@ function apiPreparar(arquivos) {
   arquivos = (arquivos || []).map(function (a) { return typeof a === 'string' ? { nome: a, origem: '' } : a; });
   var ss = SpreadsheetApp.openById(planilhaId_());
   var dados = lerPessoas_(ss);
-  sincronizarRegistro_(dados.pessoas);
+  sincronizarRegistro_(ss, dados.pessoas);
   var reg = lerDados_().registro;
   var resultado = combinar_(arquivos.map(function (a) { return a.nome; }), dados.pessoas);
   marcarJaColocadas_(resultado, arquivos, dados.pessoas, reg);
@@ -146,36 +146,51 @@ function guardarFoto_(ss, pessoa, fonte, origem) {
   } else {
     arquivo = DriveApp.getFileById(fonte.driveId).makeCopy(nomeArquivo, pasta);
   }
-  arquivo.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
   var link = 'https://drive.google.com/file/d/' + arquivo.getId() + '/view';
-
-  var trava = LockService.getScriptLock();
-  trava.waitLock(30000);
+  var gravou = false;
   try {
-    var dados = lerDados_();
-    var antiga = dados.registro[pessoa.chave];
-    // A foto antiga vai para a lixeira do Drive (dá para recuperar por 30 dias).
+    arquivo.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+
+    // Fotos antigas com o mesmo nome: procura antes de pegar a vez, para não segurar os outros.
     var apagar = [];
-    if (antiga && antiga.fileId) apagar.push(antiga.fileId);
     var mesmas = pasta.getFiles();
     var prefixo = nomeArquivo.replace(/\.[^.]+$/, '.');
     while (mesmas.hasNext()) {
       var f = mesmas.next();
       if (f.getName().indexOf(prefixo) === 0 && f.getId() !== arquivo.getId()) apagar.push(f.getId());
     }
-    apagar.forEach(function (id) {
-      if (id === arquivo.getId()) return;
-      try { DriveApp.getFileById(id).setTrashed(true); } catch (e) { /* já apagada */ }
-    });
-    pessoa.lugares.forEach(function (l) {
-      ss.getSheetByName(l.aba).getRange(l.linha, l.coluna).setValue(link);
-    });
-    SpreadsheetApp.flush();
-    dados.registro[pessoa.chave] = { nome: pessoa.nome, fileId: arquivo.getId(), link: link, origem: origem,
-      quando: new Date().toISOString() };
-    salvarDados_(dados);
-  } finally {
-    trava.releaseLock();
+
+    var trava = esperarVez_();
+    try {
+      var dados = lerDados_();
+      var antiga = dados.registro[pessoa.chave];
+      if (antiga && antiga.fileId) apagar.push(antiga.fileId);
+      // Duas fotos da mesma pessoa ao mesmo tempo: a outra pode ter mandado esta para a lixeira. A última vale.
+      if (arquivo.isTrashed()) arquivo.setTrashed(false);
+      gravou = true;
+      pessoa.lugares.forEach(function (l) {
+        ss.getSheetByName(l.aba).getRange(l.linha, l.coluna).setValue(link);
+      });
+      SpreadsheetApp.flush();
+      dados.registro[pessoa.chave] = { nome: pessoa.nome, fileId: arquivo.getId(), link: link, origem: origem,
+        quando: new Date().toISOString() };
+      salvarDados_(dados);
+      // Só com o link novo já na planilha a foto antiga vai para a lixeira (dá para recuperar por 30 dias):
+      // se o Drive falhar no meio, nenhum link fica apontando para foto apagada.
+      // A lista foi feita antes da vez: foto que neste meio-tempo passou para outra pessoa (Trocar) fica.
+      var deOutros = {};
+      Object.keys(dados.registro).forEach(function (c) { if (c !== pessoa.chave) deOutros[dados.registro[c].fileId] = true; });
+      apagar.forEach(function (id) {
+        if (id === arquivo.getId() || deOutros[id]) return;
+        try { DriveApp.getFileById(id).setTrashed(true); } catch (e) { /* já apagada; sobra na pasta */ }
+      });
+    } finally {
+      trava.releaseLock();
+    }
+  } catch (e) {
+    // Não chegou na planilha: a foto recém-criada não fica sobrando na pasta.
+    if (!gravou) { try { arquivo.setTrashed(true); } catch (x) { /* tanto faz */ } }
+    throw e;
   }
   return {
     link: link,
@@ -185,6 +200,13 @@ function guardarFoto_(ss, pessoa, fonte, origem) {
 }
 
 /* ------------------------------------------------------------------ registro e fila (continuam sem o app aberto) */
+
+// Pega a vez de mexer na planilha e no registro. Muita gente ao mesmo tempo: espera até 2 minutos.
+function esperarVez_() {
+  var trava = LockService.getScriptLock();
+  if (trava.tryLock(120000)) return trava;
+  throw new Error('Muita gente usando o app agora. Tente de novo em 1 minuto.');
+}
 
 // Arquivo dados-do-app.json na pasta do app: registro das fotos guardadas e fila de fotos do Drive a colocar.
 function arquivoDados_() {
@@ -206,15 +228,16 @@ function dadosVazios_() {
   return { registro: {}, fila: [], total: 0, feitas: 0, erros: [] };
 }
 
+// Se o Drive falhar na leitura, dá erro (tente de novo) em vez de seguir com um registro vazio:
+// seguir vazio apagaria a lista de fotos guardadas na próxima gravação.
 function lerDados_() {
-  try {
-    var d = JSON.parse(arquivoDados_().getBlob().getDataAsString());
-    var v = dadosVazios_();
-    Object.keys(v).forEach(function (k) { if (d[k] === undefined) d[k] = v[k]; });
-    return d;
-  } catch (e) {
-    return dadosVazios_();
-  }
+  var texto = arquivoDados_().getBlob().getDataAsString();
+  var v = dadosVazios_();
+  if (!String(texto || '').trim()) return v;
+  var d = JSON.parse(texto);
+  if (!d || typeof d !== 'object') throw new Error('O registro do app (dados-do-app.json) está estragado.');
+  Object.keys(v).forEach(function (k) { if (d[k] == null) d[k] = v[k]; });
+  return d;
 }
 
 function salvarDados_(d) {
@@ -225,8 +248,7 @@ function salvarDados_(d) {
 function apiEnfileirar(lista) {
   lista = (lista || []).filter(function (x) { return x && x.driveId && x.chave; });
   if (!lista.length) return apiEstado();
-  var trava = LockService.getScriptLock();
-  trava.waitLock(30000);
+  var trava = esperarVez_();
   try {
     var d = lerDados_();
     var naFila = {};
@@ -260,8 +282,15 @@ function desligarRotina_() {
 function processarFila() {
   var props = PropertiesService.getScriptProperties();
   var agora = Date.now();
-  if (Number(props.getProperty('FILA_RODANDO_ATE') || 0) > agora) return;
-  props.setProperty('FILA_RODANDO_ATE', String(agora + 5 * 60 * 1000));
+  // Conferir e marcar "rodando" de uma vez só: duas rodadas juntas fariam a mesma foto duas vezes.
+  var vez = LockService.getScriptLock();
+  if (!vez.tryLock(10000)) return;
+  try {
+    if (Number(props.getProperty('FILA_RODANDO_ATE') || 0) > agora) return;
+    props.setProperty('FILA_RODANDO_ATE', String(agora + 5 * 60 * 1000));
+  } finally {
+    vez.releaseLock();
+  }
   try {
     var ss = SpreadsheetApp.openById(planilhaId_());
     var pessoas = lerPessoas_(ss).pessoas;
@@ -276,8 +305,7 @@ function processarFila() {
       } catch (e) {
         erro = item.arquivo + ': ' + (e && e.message || e);
       }
-      var trava = LockService.getScriptLock();
-      trava.waitLock(30000);
+      var trava = esperarVez_();
       try {
         var d = lerDados_();
         d.fila = d.fila.filter(function (x) { return x.driveId !== item.driveId; });
@@ -301,34 +329,44 @@ function idDoLink_(link) {
 
 // A planilha manda: cada foto guardada fica com a pessoa que tem o link dela na planilha
 // (nome e número podem ter mudado). Foto sem ninguém na planilha continua guardada, marcada.
-function sincronizarRegistro_(pessoas) {
-  var dono = {};
-  pessoas.forEach(function (p) {
-    p.links.forEach(function (l) { var id = idDoLink_(l); if (id && !dono[id]) dono[id] = p; });
-  });
-  var trava = LockService.getScriptLock();
-  trava.waitLock(30000);
+function sincronizarRegistro_(ss, pessoas) {
+  // Quase sempre nada mudou: confere sem pegar a vez, e só pega a vez quando há o que arrumar.
+  if (!registroSincronizado_(lerDados_(), pessoas).mudou) return;
+  var trava = esperarVez_();
   try {
-    var d = lerDados_(), novo = {}, mudou = false;
-    Object.keys(d.registro).forEach(function (c) {
-      var r = d.registro[c], p = dono[r.fileId];
-      var chave = p && !novo[p.chave] ? p.chave : c;
-      if (novo[chave]) chave = c + ' (' + r.fileId + ')';
-      if (chave !== c) mudou = true;
-      if (p && r.nome !== p.nome) { r.nome = p.nome; mudou = true; }
-      if (!!r.semPessoa === !!p) { r.semPessoa = !p; mudou = true; }
-      novo[chave] = r;
-    });
-    if (mudou) { d.registro = novo; salvarDados_(d); }
+    // Relê a planilha já com a vez: alguém pode ter trocado uma foto de pessoa neste meio-tempo.
+    var d = lerDados_(), r = registroSincronizado_(d, lerPessoas_(ss).pessoas);
+    if (r.mudou) { d.registro = r.registro; salvarDados_(d); }
   } finally {
     trava.releaseLock();
   }
 }
 
+function registroSincronizado_(d, pessoas) {
+  var dono = {};
+  pessoas.forEach(function (p) {
+    p.links.forEach(function (l) { var id = idDoLink_(l); if (id && !dono[id]) dono[id] = p; });
+  });
+  var novo = {}, mudou = false;
+  Object.keys(d.registro).forEach(function (c) {
+    var r = d.registro[c], p = dono[r.fileId];
+    var chave = p && !novo[p.chave] ? p.chave : c;
+    if (novo[chave]) chave = c + ' (' + r.fileId + ')';
+    if (chave !== c) mudou = true;
+    if (p && r.nome !== p.nome) { r.nome = p.nome; mudou = true; }
+    if (!!r.semPessoa === !!p) { r.semPessoa = !p; mudou = true; }
+    novo[chave] = r;
+  });
+  return { mudou: mudou, registro: novo };
+}
+
 // O que o app mostra ao abrir: andamento da fila e as fotos guardadas.
 // Com sincronizar = true, antes confere as fotos guardadas com a planilha.
 function apiEstado(sincronizar) {
-  if (sincronizar) sincronizarRegistro_(lerPessoas_(SpreadsheetApp.openById(planilhaId_())).pessoas);
+  if (sincronizar) {
+    var ss = SpreadsheetApp.openById(planilhaId_());
+    sincronizarRegistro_(ss, lerPessoas_(ss).pessoas);
+  }
   var d = lerDados_();
   var guardadas = Object.keys(d.registro).map(function (c) {
     var r = d.registro[c];
@@ -365,30 +403,34 @@ function apiTrocarPessoa(pedido) {
   var ss = SpreadsheetApp.openById(planilhaId_());
   var pessoas = lerPessoas_(ss).pessoas;
   var nova = acharPessoa_(ss, pedido.para, pessoas);
-  var trava = LockService.getScriptLock();
-  trava.waitLock(30000);
+  var trava = esperarVez_();
   try {
     var d = lerDados_();
     var foto = d.registro[pedido.de];
     if (!foto) throw new Error('Essa foto não está mais guardada.');
-    var antiga = pessoas.filter(function (p) { return p.chave === pedido.de; })[0];
-    if (antiga) limparLink_(ss, antiga, foto.link);
-    // Se a pessoa certa já tinha foto, a dela vai para a lixeira (fica só a foto trocada).
-    var dela = d.registro[nova.chave];
-    if (dela && dela.fileId && dela.fileId !== foto.fileId) {
-      try { DriveApp.getFileById(dela.fileId).setTrashed(true); } catch (e) { /* já apagada */ }
-    }
-    var arquivo = DriveApp.getFileById(foto.fileId);
-    var ext = (arquivo.getName().match(/\.([A-Za-z0-9]{2,5})$/) || [, 'jpg'])[1];
-    arquivo.setName((nova.numeros.length ? nova.numeros[0] + ' - ' : '') + nova.nome + '.' + ext);
+    // Primeiro o link vai para a pessoa certa, depois sai da errada e por último a foto antiga dela vai para a
+    // lixeira: se o Drive falhar no meio, nenhum link fica apontando para foto apagada.
     nova.lugares.forEach(function (l) {
       ss.getSheetByName(l.aba).getRange(l.linha, l.coluna).setValue(foto.link);
     });
+    var antiga = pessoas.filter(function (p) { return p.chave === pedido.de; })[0];
+    if (antiga) limparLink_(ss, antiga, foto.link);
     SpreadsheetApp.flush();
+    var dela = d.registro[nova.chave];
     delete d.registro[pedido.de];
     foto.nome = nova.nome;
     d.registro[nova.chave] = foto;
     salvarDados_(d);
+    // Se a pessoa certa já tinha foto, a dela vai para a lixeira (fica só a foto trocada).
+    if (dela && dela.fileId && dela.fileId !== foto.fileId) {
+      try { DriveApp.getFileById(dela.fileId).setTrashed(true); } catch (e) { /* já apagada; sobra na pasta */ }
+    }
+    // Renomear o arquivo é só para organizar a pasta: se o Drive recusar, a troca continua.
+    try {
+      var arquivo = DriveApp.getFileById(foto.fileId);
+      var ext = (arquivo.getName().match(/\.([A-Za-z0-9]{2,5})$/) || [, 'jpg'])[1];
+      arquivo.setName((nova.numeros.length ? nova.numeros[0] + ' - ' : '') + nova.nome + '.' + ext);
+    } catch (e) { console.warn('Não renomeou ' + foto.fileId + ': ' + (e && e.message || e)); }
   } finally {
     trava.releaseLock();
   }
@@ -399,8 +441,7 @@ function apiTrocarPessoa(pedido) {
 function apiExcluirFoto(chave) {
   var ss = SpreadsheetApp.openById(planilhaId_());
   var pessoas = lerPessoas_(ss).pessoas;
-  var trava = LockService.getScriptLock();
-  trava.waitLock(30000);
+  var trava = esperarVez_();
   try {
     var d = lerDados_();
     var foto = d.registro[chave];
@@ -408,9 +449,9 @@ function apiExcluirFoto(chave) {
     var pessoa = pessoas.filter(function (p) { return p.chave === chave; })[0];
     if (pessoa) limparLink_(ss, pessoa, foto.link);
     SpreadsheetApp.flush();
-    try { DriveApp.getFileById(foto.fileId).setTrashed(true); } catch (e) { /* já apagada */ }
     delete d.registro[chave];
     salvarDados_(d);
+    try { DriveApp.getFileById(foto.fileId).setTrashed(true); } catch (e) { /* já apagada; sobra na pasta */ }
   } finally {
     trava.releaseLock();
   }

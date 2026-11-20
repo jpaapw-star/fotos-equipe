@@ -58,7 +58,7 @@ function montar() {
     PropertiesService: { getScriptProperties: () => ({
       getProperty: (k) => (k in props ? props[k] : null), setProperty: (k, v) => { props[k] = v; },
       deleteProperty: (k) => { delete props[k]; } }) },
-    LockService: { getScriptLock: () => ({ waitLock: () => {}, releaseLock: () => {} }) },
+    LockService: { getScriptLock: () => ({ waitLock: () => {}, tryLock: () => true, releaseLock: () => {} }) },
     ScriptApp: {
       getProjectTriggers: () => gatilhos,
       newTrigger: (h) => ({ timeBased: () => ({ everyMinutes: () => ({ create: () => {
@@ -165,4 +165,55 @@ test('aba com título NOME COMPLETO também recebe a foto', () => {
   m.ctx.apiEnviar({ chave: 'KAREN', arquivo: 'k.jpg', origem: 'k|1', mime: 'image/jpeg', base64: 'a' });
   assert.match(m.linhas['FUNÇÕES'][1][2], /^https:/);
   assert.strictEqual(m.linhas['FUNÇÕES'][1][2], m.linhas['Página1'][2][2]);
+});
+
+test('trocar continua mesmo se o Drive recusar renomear o arquivo', () => {
+  const m = montar();
+  m.ctx.console = { warn: () => {} };
+  m.ctx.apiEnviar({ chave: 'BRUNO VITOR', arquivo: 'x.jpg', origem: 'x|1', mime: 'image/jpeg', base64: 'a' });
+  const foto = m.ctx.apiEstado().guardadas[0];
+  m.arquivos[foto.fileId].setName = () => { throw new Error('Acesso negado: DriveApp.'); };
+  const est = m.ctx.apiTrocarPessoa({ de: 'BRUNO VITOR', para: 'KAREN' });
+  assert.deepStrictEqual(est.guardadas.map((g) => g.chave), ['KAREN']);
+  assert.strictEqual(m.linhas['Página1'][2][2], foto.link);
+  assert.strictEqual(m.linhas['Página1'][1][2], '');
+});
+
+test('duas fotos da mesma pessoa ao mesmo tempo: a que grava por último fica fora da lixeira', () => {
+  const m = montar();
+  // Enquanto esta espera a vez, outro envio da KAREN manda a foto nova para a lixeira (mesmo nome).
+  m.ctx.LockService = { getScriptLock: () => ({ tryLock: () => {
+    Object.values(m.arquivos).filter((f) => /KAREN/.test(f.nome)).forEach((f) => { f.lixo = true; });
+    return true;
+  }, releaseLock: () => {} }) };
+  const r = m.ctx.apiEnviar({ chave: 'KAREN', arquivo: 'k.jpg', origem: 'k|1', mime: 'image/jpeg', base64: 'a' });
+  const id = r.link.match(/\/d\/([^/]+)/)[1];
+  assert.strictEqual(m.arquivos[id].lixo, false);
+});
+
+test('sem vez depois de esperar: a foto criada não fica sobrando na pasta', () => {
+  const m = montar();
+  m.ctx.LockService = { getScriptLock: () => ({ tryLock: () => false, releaseLock: () => {} }) };
+  assert.throws(() => m.ctx.apiEnviar({ chave: 'KAREN', arquivo: 'k.jpg', origem: 'k|1', mime: 'image/jpeg', base64: 'a' }), /Muita gente/);
+  const fotos = Object.values(m.arquivos).filter((f) => /KAREN/.test(f.nome));
+  assert.ok(fotos.length && fotos.every((f) => f.lixo));
+  assert.strictEqual(m.linhas['Página1'][2][2], '');
+});
+
+test('foto que passou para outra pessoa enquanto chegava foto nova não vai para a lixeira', () => {
+  const m = montar();
+  m.ctx.console = { warn: () => {} };
+  m.ctx.apiEnviar({ chave: 'KAREN', arquivo: 'k.jpg', origem: 'k|1', mime: 'image/jpeg', base64: 'a' });
+  const daKaren = m.ctx.apiEstado().guardadas[0];
+  // Enquanto a foto nova da KAREN espera a vez, alguém troca a foto atual dela para o BRUNO.
+  let trocou = false;
+  const real = m.ctx.LockService;
+  m.ctx.LockService = { getScriptLock: () => ({ tryLock: () => {
+    if (!trocou) { trocou = true; m.ctx.LockService = real; m.ctx.apiTrocarPessoa({ de: 'KAREN', para: 'BRUNO VITOR' }); }
+    return true;
+  }, releaseLock: () => {} }) };
+  m.ctx.apiEnviar({ chave: 'KAREN', arquivo: 'k2.jpg', origem: 'k|2', mime: 'image/jpeg', base64: 'b' });
+  m.ctx.LockService = real;
+  assert.strictEqual(m.arquivos[daKaren.fileId].lixo, false, 'a foto do BRUNO continua');
+  assert.strictEqual(m.linhas['Página1'][1][2], daKaren.link);
 });
