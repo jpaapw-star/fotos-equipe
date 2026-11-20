@@ -13,6 +13,7 @@ var PASTA_NOME = 'Fotos da equipe';
 function doGet() {
   return HtmlService.createTemplateFromFile('Index').evaluate()
     .setTitle('Fotos da equipe')
+    .setFaviconUrl('https://jpaapw-star.github.io/painel/apps/icone-192.png')
     .addMetaTag('viewport', 'width=device-width, initial-scale=1, viewport-fit=cover');
 }
 
